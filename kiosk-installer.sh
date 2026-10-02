@@ -22,48 +22,68 @@ case "$KIOSK_URL" in
     http://*|https://*)
         ;;
     *)
-        KIOSK_URL="https://${KIOSK_URL}"
+  *     KIOSK_URL="https://${KIOSK_URL}"
         ;;
 esac
 
-echo "Installing kiosk components..."
+echo "Installi*g kiosk components..."
 
-apt-get update
+apt-get up*ate
 
 apt-get install -y \
-    xorg \
+    xorg*\
     chromium \
     openbox \
-    lightdm \
+   *lightdm \
     locales \
-    x11-xserver-utils \
-    wmctrl
+    x11-xs*rver-utils \
+    wmctrl \
+    kbd *
+    sudo
 
-# Remove keyring components to prevent unlock prompts.
-apt-get purge -y \
-    gnome-keyring \
-    seahorse || true
+# Remove keyring compon*nts to prevent unlock prompts.
+apt*get purge -y \
+    gnome-keyring \*    seahorse || true
 
-apt-get autoremove -y
+apt-get auto*emove -y
 
-# Create the kiosk group.
-groupadd -f kiosk
+# Create kiosk group.
+gr*upadd -f kiosk
 
-# Create the kiosk user if it does not already exist.
-if ! id -u kiosk >/dev/null 2>&1; then
-    useradd \
-        --create-home \
+# Create kiosk use* if it does not already exist.
+if * id -u kiosk >/dev/null 2>&1; then*    useradd \
+        --create-hom* \
         --gid kiosk \
-        --shell /bin/bash \
+        -*shell /bin/bash \
         kiosk
+fi*
+# Create configuration directorie*.
+mkdir -p /home/kiosk/.config/ope*box
+mkdir -p /etc/chromium/policie*/managed
+
+# Remove the earlier cus*om Xorg configuration if it still *xists.
+rm -f /etc/X11/xorg.conf
+
+#*Locate chvt after installing the k*d package.
+CHVT_PATH="$(command -v*chvt)"
+
+if [ -z "$CHVT_PATH" ]; th*n
+    echo "Could not locate the c*vt command."
+    exit 1
 fi
 
-# Create configuration directories.
-mkdir -p /home/kiosk/.config/openbox
-mkdir -p /etc/chromium/policies/managed
+# Allo* only the kiosk user to switch spe*ifically to TTY2 without a passwor*.
+cat > /etc/sudoers.d/kiosk-chvt *<EOF
+kiosk ALL=(root) NOPASSWD: $C*VT_PATH 2
+EOF
 
-# Remove the earlier custom Xorg configuration if it still exists.
-rm -f /etc/X11/xorg.conf
+chmod 440 /etc/sudo*rs.d/kiosk-chvt
+
+# Validate the su*oers file before continuing.
+visud* -cf /etc/sudoers.d/kiosk-chvt
+
+# Ensure TTY2 is available for the emergency escape shortcut.
+systemctl enable getty@tty2.service
 
 # Configure LightDM to automatically start an X11 Openbox session.
 cat > /etc/lightdm/lightdm.conf <<'EOF'
@@ -74,7 +94,7 @@ user-session=openbox
 xserver-command=X -nolisten tcp
 EOF
 
-# Disable password storage, browser sign-in, and synchronization.
+# Disable password storage, synchronization, and browser sign-in.
 cat > /etc/chromium/policies/managed/kiosk.json <<'EOF'
 {
     "PasswordManagerEnabled": false,
@@ -83,15 +103,25 @@ cat > /etc/chromium/policies/managed/kiosk.json <<'EOF'
 }
 EOF
 
-# Configure Openbox window controls.
+# Create the local emergency escape command.
+cat > /usr/local/bin/kiosk-emergency-exit <<EOF
+#!/bin/bash
+
+exec sudo "$CHVT_PATH" 2
+EOF
+
+chmod 755 /usr/local/bin/kiosk-emergency-exit
+
+# Configure Openbox.
+#
+# Ctrl+Alt+Shift+K switches the physical console to TTY2.
 #
 # L = window title
 # M = maximize
 # C = close
 #
-# Chromium currently draws its own title bar, so this does not remove
-# Chromium's minimize button. The watchdog below restores Chromium if
-# that button is used.
+# Chromium draws its own title bar, so the wmctrl watchdog below
+# restores Chromium whenever it is minimized.
 cat > /home/kiosk/.config/openbox/rc.xml <<'EOF'
 <?xml version="1.0" encoding="UTF-8"?>
 
@@ -109,6 +139,14 @@ cat > /home/kiosk/.config/openbox/rc.xml <<'EOF'
         <followMouse>no</followMouse>
         <raiseOnFocus>yes</raiseOnFocus>
     </focus>
+
+    <keyboard>
+        <keybind key="C-A-S-k">
+            <action name="Execute">
+                <command>/usr/local/bin/kiosk-emergency-exit</command>
+            </action>
+        </keybind>
+    </keyboard>
 
     <applications>
         <application class="Chromium-browser">
@@ -130,10 +168,10 @@ cat > /home/kiosk/.config/openbox/rc.xml <<'EOF'
 </openbox_config>
 EOF
 
-# Safely quote the supplied URL before inserting it into the generated script.
+# Safely quote the supplied URL before writing it into autostart.
 printf -v KIOSK_URL_QUOTED '%q' "$KIOSK_URL"
 
-# Create the Openbox autostart script.
+# Configure Openbox autostart.
 cat > /home/kiosk/.config/openbox/autostart <<EOF
 #!/bin/bash
 
@@ -148,10 +186,8 @@ xset -dpms
 # Configure connected displays.
 xrandr --auto
 
-# Watch Chromium windows continuously.
-#
-# If Chromium is minimized, remove its hidden state.
-# If Chromium is behind another window, activate and raise it.
+# Restore, maximize, and raise Chromium whenever it is minimized
+# or placed behind another window.
 (
     while true; do
         WINDOW_ID=\$(wmctrl -lx 2>/dev/null |
@@ -160,10 +196,15 @@ xrandr --auto
                  END { print id }')
 
         if [ -n "\$WINDOW_ID" ]; then
-            wmctrl -i -r "\$WINDOW_ID" -b remove,hidden 2>/dev/null || true
-            wmctrl -i -r "\$WINDOW_ID" -b add,maximized_vert,maximized_horz \
+            wmctrl -i -r "\$WINDOW_ID" \
+                -b remove,hidden 2>/dev/null || true
+
+            wmctrl -i -r "\$WINDOW_ID" \
+                -b add,maximized_vert,maximized_horz \
                 2>/dev/null || true
-            wmctrl -i -a "\$WINDOW_ID" 2>/dev/null || true
+
+            wmctrl -i -a "\$WINDOW_ID" \
+                2>/dev/null || true
         fi
 
         sleep 2
@@ -172,7 +213,7 @@ xrandr --auto
 
 # Relaunch Chromium whenever it is closed.
 while true; do
-    # Use a fresh browser profile for every Chromium launch.
+    # Start each Chromium launch with a clean browser profile.
     rm -rf "\$PROFILE_DIR"
     mkdir -p "\$PROFILE_DIR"
 
@@ -194,7 +235,7 @@ while true; do
 done
 EOF
 
-# Set ownership and permissions after creating all kiosk files.
+# Set ownership only after all kiosk configuration files are created.
 chown -R kiosk:kiosk /home/kiosk
 
 chmod 755 /home/kiosk
@@ -214,5 +255,11 @@ echo "Configured URL: $KIOSK_URL"
 echo "Window manager: Openbox on Xorg"
 echo "Chromium will be restored if minimized."
 echo "Chromium will be relaunched if closed."
+echo
+echo "Emergency local escape:"
+echo "Ctrl+Alt+Shift+K switches to TTY2."
+echo
+echo "Return to the kiosk using Ctrl+Alt+F1 or Ctrl+Alt+F7,"
+echo "depending on which TTY LightDM uses."
 echo
 echo "Reboot the computer to apply the configuration."
