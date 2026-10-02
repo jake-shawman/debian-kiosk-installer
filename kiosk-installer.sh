@@ -1,80 +1,101 @@
 #!/bin/bash
 
-# be new
+set -e
+
+# Must be run as root
+if [ "$(id -u)" -ne 0 ]; then
+    echo "Run this script as root or with sudo."
+    exit 1
+fi
+
+# Update packages
 apt-get update
 
-# get software
-apt-get install \
-    unclutter \
+# Install required software
+apt-get install -y \
     xorg \
     chromium \
     openbox \
     lightdm \
     locales \
-    -y
+    x11-xserver-utils
 
-# dir
-mkdir -p /home/kiosk/.config/openbox
-
-# create group
+# Create kiosk group and user
 groupadd -f kiosk
 
-# create user if not exists
-id -u kiosk &>/dev/null || useradd -m kiosk -g kiosk -s /bin/bash 
-
-# rights
-chown -R kiosk:kiosk /home/kiosk
-
-# remove virtual consoles
-if [ -e "/etc/X11/xorg.conf" ]; then
-  mv /etc/X11/xorg.conf /etc/X11/xorg.conf.backup
+if ! id kiosk >/dev/null 2>&1; then
+    useradd -m -g kiosk -s /bin/bash kiosk
 fi
-cat > /etc/X11/xorg.conf << EOF
+
+# Create Openbox configuration directory
+mkdir -p /home/kiosk/.config/openbox
+
+# Disable virtual-terminal switching
+if [ -e /etc/X11/xorg.conf ] &&
+   [ ! -e /etc/X11/xorg.conf.backup ]; then
+    mv /etc/X11/xorg.conf /etc/X11/xorg.conf.backup
+fi
+
+cat > /etc/X11/xorg.conf <<'EOF'
 Section "ServerFlags"
     Option "DontVTSwitch" "true"
 EndSection
 EOF
 
-# create config
-if [ -e "/etc/lightdm/lightdm.conf" ]; then
-  mv /etc/lightdm/lightdm.conf /etc/lightdm/lightdm.conf.backup
+# Configure LightDM autologin
+if [ -e /etc/lightdm/lightdm.conf ] &&
+   [ ! -e /etc/lightdm/lightdm.conf.backup ]; then
+    cp /etc/lightdm/lightdm.conf /etc/lightdm/lightdm.conf.backup
 fi
-cat > /etc/lightdm/lightdm.conf << EOF
+
+cat > /etc/lightdm/lightdm.conf <<'EOF'
 [Seat:*]
 xserver-command=X -nolisten tcp
 autologin-user=kiosk
-autologin-session=openbox
+autologin-user-timeout=0
+user-session=openbox
 EOF
 
-# create autostart
-if [ -e "/home/kiosk/.config/openbox/autostart" ]; then
-  mv /home/kiosk/.config/openbox/autostart /home/kiosk/.config/openbox/autostart.backup
-fi
-cat > /home/kiosk/.config/openbox/autostart << EOF
+# Create Openbox autostart
+cat > /home/kiosk/.config/openbox/autostart <<'EOF'
 #!/bin/bash
 
 KIOSK_URL="https://www.google.com/"
 
-unclutter -idle 0.1 -grab -root &
+# Prevent screen blanking
+xset s off
+xset s noblank
+xset -dpms
 
-while :
-do
-  xrandr --auto
-  chromium \
-    --noerrdialogs \
-    --no-memcheck \
-    --no-first-run \
-    --start-maximized \
-    --disable \
-    --disable-translate \
-    --disable-infobars \
-    --disable-suggestions-service \
-    --disable-save-password-bubble \
-    --disable-session-crashed-bubble \
-    --incognito \
-    --kiosk $KIOSK_URL
-  sleep 5
-done &
+# Automatically configure connected displays
+xrandr --auto
+
+# Start Chromium and restart it if it exits
+while true; do
+    chromium \
+        --noerrdialogs \
+        --no-first-run \
+        --start-maximized \
+        --disable-translate \
+        --disable-infobars \
+        --disable-session-crashed-bubble \
+        --incognito \
+        --kiosk \
+        "$KIOSK_URL"
+
+    sleep 5
+done
 EOF
 
-echo "Done!"
+# Set ownership after creating all user files
+chown -R kiosk:kiosk /home/kiosk/.config
+
+# Although Openbox normally reads the file directly, executable permission
+# is useful for manually testing it.
+chmod 755 /home/kiosk/.config/openbox/autostart
+
+# Ensure LightDM starts automatically
+systemctl enable lightdm
+
+echo "Kiosk configuration complete."
+echo "Reboot with: reboot"
