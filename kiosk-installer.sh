@@ -41,7 +41,7 @@ if [ -e "/etc/lightdm/lightdm.conf" ]; then
 fi
 cat > /etc/lightdm/lightdm.conf << EOF
 [Seat:*]
-xserver-command=X -nocursor -nolisten tcp
+xserver-command=X -nolisten tcp
 autologin-user=kiosk
 autologin-session=openbox
 EOF
@@ -53,7 +53,7 @@ fi
 cat > /home/kiosk/.config/openbox/autostart << EOF
 #!/bin/bash
 
-KIOSK_URL="https://neave.tv/"
+KIOSK_URL="https://www.google.com/"
 
 unclutter -idle 0.1 -grab -root &
 
